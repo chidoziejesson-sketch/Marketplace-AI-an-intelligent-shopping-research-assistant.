@@ -1,5 +1,7 @@
+
 import React from 'react';
 import { MicIcon } from './MicIcon';
+import { StopIcon } from './StopIcon';
 
 interface SearchInputProps {
   value: string;
@@ -31,10 +33,10 @@ const SearchInput: React.FC<SearchInputProps> = ({ value, onChange, onSearch, is
       <button
         onClick={onMicClick}
         disabled={isLoading}
-        className={`p-2.5 rounded-full transition-colors duration-300 ${isListening ? 'bg-red-500/80 text-white' : 'hover:bg-gray-700'}`}
+        className={`p-2.5 rounded-full transition-colors duration-300 ${isListening ? 'bg-red-500/80 text-white animate-pulse' : 'hover:bg-gray-700'}`}
         aria-label={isListening ? 'Stop listening' : 'Start voice search'}
       >
-        <MicIcon isListening={isListening} />
+        {isListening ? <StopIcon /> : <MicIcon />}
       </button>
       <button
         onClick={onSearch}

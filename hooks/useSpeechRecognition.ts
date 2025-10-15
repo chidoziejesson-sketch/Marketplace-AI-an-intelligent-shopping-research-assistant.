@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 interface SpeechRecognitionOptions {
@@ -20,6 +19,13 @@ export const useSpeechRecognition = ({ onResult }: SpeechRecognitionOptions) => 
   // FIX: Cannot find name 'SpeechRecognition'. Use `any` as the type for the ref.
   const recognitionRef = useRef<any | null>(null);
 
+  // Use a ref for the onResult callback to prevent stale closures in the useEffect.
+  const onResultRef = useRef(onResult);
+  useEffect(() => {
+    onResultRef.current = onResult;
+  }, [onResult]);
+
+  // This effect should only run once to set up the recognition object.
   useEffect(() => {
     const SpeechRecognition = getSpeechRecognition();
     if (!SpeechRecognition) {
@@ -28,7 +34,7 @@ export const useSpeechRecognition = ({ onResult }: SpeechRecognitionOptions) => 
     }
 
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
@@ -43,47 +49,58 @@ export const useSpeechRecognition = ({ onResult }: SpeechRecognitionOptions) => 
           interimTranscript += event.results[i][0].transcript;
         }
       }
+      
+      // Update transcript for UI feedback
       setTranscript(finalTranscript + interimTranscript);
 
-      // Trigger search on final result after a pause
+      // When a final result is available, trigger the search.
+      // The recognition will stop itself since `continuous` is false, which then fires `onend`.
       if (finalTranscript) {
-          onResult(finalTranscript.trim());
-          stopListening();
+        onResultRef.current(finalTranscript.trim());
       }
     };
     
+    // This is the single source of truth for when listening has stopped.
     recognition.onend = () => {
       setIsListening(false);
     };
 
     // FIX: Cannot find name 'SpeechRecognitionErrorEvent'. Use `any` for the event type.
     recognition.onerror = (event: any) => {
-        if (event.error !== 'no-speech') {
-            setError(event.error);
-        }
-        setIsListening(false);
+      if (event.error && event.error !== 'no-speech' && event.error !== 'aborted') {
+        setError(`Speech recognition error: ${event.error}`);
+      }
+      // The 'onend' event will also fire after an error, which handles setting isListening to false.
+      setIsListening(false);
     };
 
     recognitionRef.current = recognition;
 
+    // Cleanup when the component unmounts.
     return () => {
-      recognition.stop();
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
     };
-  }, [onResult]);
+  }, []); // Empty dependency array ensures this runs only once.
 
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening) {
       setTranscript('');
       setError(null);
-      recognitionRef.current.start();
-      setIsListening(true);
+      try {
+        recognitionRef.current.start();
+        setIsListening(true);
+      } catch (err) {
+        console.error("Error starting speech recognition:", err);
+      }
     }
   }, [isListening]);
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current && isListening) {
+      // Manually stop listening. This will trigger the `onend` event handler.
       recognitionRef.current.stop();
-      setIsListening(false);
     }
   }, [isListening]);
 

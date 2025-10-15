@@ -1,13 +1,10 @@
+
 import React from 'react';
 
-interface MicIconProps {
-  isListening: boolean;
-}
-
-export const MicIcon: React.FC<MicIconProps> = ({ isListening }) => (
+export const MicIcon: React.FC = () => (
   <svg 
     xmlns="http://www.w3.org/2000/svg" 
-    className={`h-5 w-5 ${isListening ? 'animate-pulse' : ''}`} 
+    className="h-5 w-5"
     viewBox="0 0 20 20" 
     fill="currentColor"
   >
