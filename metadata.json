@@ -1,5 +1,7 @@
 {
-  "name": "Gemini Marketplace Assistant",
+  "name": "Marketplace Assistant",
   "description": "An AI-powered marketplace assistant that provides product recommendations, e-commerce platform suggestions, and generates product images based on user queries.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }

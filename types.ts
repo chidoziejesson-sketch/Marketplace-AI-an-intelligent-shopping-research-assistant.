@@ -21,6 +21,7 @@ export interface ApiResponse {
   textResponse: string;
   products: Product[];
   ecommerceSources: EcommerceSource[];
+  imageGenerationErrors?: string[];
 }
 
 // Type for the raw response from Gemini before image generation

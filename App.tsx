@@ -1,5 +1,4 @@
-
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import type { ApiResponse } from './types';
 import { generateMarketplaceResponse } from './services/geminiService';
 import SearchInput from './components/SearchInput';
@@ -8,6 +7,9 @@ import SourceList from './components/SourceList';
 import LoadingSpinner from './components/LoadingSpinner';
 import ErrorMessage from './components/ErrorMessage';
 import Welcome from './components/Welcome';
+import { useSpeechRecognition } from './hooks/useSpeechRecognition';
+import { useSpeechSynthesis } from './hooks/useSpeechSynthesis';
+import { SpeakerIcon } from './components/SpeakerIcon';
 
 const App: React.FC = () => {
   const [userInput, setUserInput] = useState<string>('');
@@ -15,6 +17,8 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [apiResponse, setApiResponse] = useState<ApiResponse | null>(null);
 
+  const { speak, cancel, isSpeaking } = useSpeechSynthesis();
+  
   const handleSearch = useCallback(async (searchQuery: string) => {
     if (!searchQuery.trim()) {
       setError('Please enter a search query.');
@@ -24,6 +28,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setApiResponse(null);
+    cancel(); // Stop any ongoing speech
 
     try {
       const response = await generateMarketplaceResponse(searchQuery);
@@ -35,12 +40,53 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [cancel]);
+
+  const {
+    isListening,
+    transcript,
+    startListening,
+    stopListening,
+    error: recognitionError,
+  } = useSpeechRecognition({
+    onResult: (result: string) => {
+      setUserInput(result);
+      handleSearch(result);
+    },
+  });
+
+  useEffect(() => {
+    setUserInput(transcript);
+  }, [transcript]);
+  
+  useEffect(() => {
+    if (recognitionError) {
+      setError(`Voice recognition error: ${recognitionError}`);
+    }
+  }, [recognitionError]);
 
   const handleExampleClick = useCallback((query: string) => {
     setUserInput(query);
     handleSearch(query);
   }, [handleSearch]);
+  
+  const handleMicClick = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      setApiResponse(null);
+      setError(null);
+      startListening();
+    }
+  };
+  
+  const handleToggleSpeak = () => {
+    if (isSpeaking) {
+      cancel();
+    } else if (apiResponse?.textResponse) {
+      speak(apiResponse.textResponse);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans">
@@ -59,6 +105,8 @@ const App: React.FC = () => {
               onChange={(e) => setUserInput(e.target.value)}
               onSearch={() => handleSearch(userInput)}
               isLoading={isLoading}
+              isListening={isListening}
+              onMicClick={handleMicClick}
             />
           </div>
 
@@ -71,9 +119,29 @@ const App: React.FC = () => {
             {apiResponse && (
               <div className="space-y-12">
                 <div>
-                  <h2 className="text-2xl font-semibold mb-4 border-b-2 border-purple-500 pb-2">Assistant's Response</h2>
+                   <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-2xl font-semibold border-b-2 border-purple-500 pb-2">Assistant's Response</h2>
+                    <button 
+                      onClick={handleToggleSpeak}
+                      className="p-2 rounded-full hover:bg-gray-700 transition-colors"
+                      aria-label={isSpeaking ? "Stop reading response" : "Read response aloud"}
+                    >
+                      <SpeakerIcon isSpeaking={isSpeaking} />
+                    </button>
+                  </div>
                   <p className="text-gray-300 leading-relaxed bg-gray-800/50 p-4 rounded-lg">{apiResponse.textResponse}</p>
                 </div>
+
+                {apiResponse.imageGenerationErrors && apiResponse.imageGenerationErrors.length > 0 && (
+                   <div className="space-y-2">
+                    <h3 className="text-xl font-semibold text-yellow-400">Image Generation Notice</h3>
+                     {apiResponse.imageGenerationErrors.map((imgError, index) => (
+                       <div key={index} className="bg-yellow-900/50 border border-yellow-500 text-yellow-300 px-4 py-3 rounded-lg" role="alert">
+                         <p>{imgError}</p>
+                       </div>
+                     ))}
+                   </div>
+                 )}
 
                 {apiResponse.products && apiResponse.products.length > 0 && (
                   <div>
