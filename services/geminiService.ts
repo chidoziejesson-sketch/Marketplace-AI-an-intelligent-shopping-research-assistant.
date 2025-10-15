@@ -1,0 +1,129 @@
+
+import { GoogleGenAI, Type } from "@google/genai";
+import type { ApiResponse, GeminiTextResponse, Product } from '../types';
+
+if (!process.env.API_KEY) {
+  console.error("API_KEY environment variable not set. Some features will be disabled.");
+}
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+
+const ecommerceKnowledge = {
+    global_platforms: ["Amazon", "eBay", "Alibaba", "Taobao", "Tmall", "AliExpress", "Wish", "Etsy", "MercadoLibre", "Rakuten"],
+    regional_platforms_summary: "Platforms like JD.com (China), Flipkart (India), Shopee (Southeast Asia), Zalando (Europe), Walmart (USA), Noon (Middle East).",
+    specialized_platforms_summary: "Platforms for Fashion (ASOS, Shein), Electronics (Best Buy, Newegg), Home & Garden (Wayfair, IKEA), Luxury (Farfetch), etc."
+};
+
+const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+        text_response: { 
+            type: Type.STRING,
+            description: "A detailed, helpful response to the user's query."
+        },
+        ecommerce_sources: {
+            type: Type.ARRAY,
+            description: "A list of relevant e-commerce platforms.",
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    platform: { type: Type.STRING, description: "Name of the e-commerce platform." },
+                    region: { type: Type.STRING, description: "Primary region or country of operation." },
+                    specialties: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Categories the platform is known for." },
+                    url: { type: Type.STRING, description: "The main URL of the platform." }
+                },
+                required: ['platform', 'region', 'specialties', 'url']
+            }
+        },
+        products: {
+            type: Type.ARRAY,
+            description: "A list of specific product recommendations.",
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    name: { type: Type.STRING, description: "The name of the product." },
+                    description: { type: Type.STRING, description: "A brief description of the product." },
+                    price: { type: Type.NUMBER, description: "An estimated price in USD." },
+                    platform: { type: Type.STRING, description: "A suggested platform to find this product." },
+                    image_prompt: { type: Type.STRING, description: "A detailed, photorealistic prompt for an image generation model. E.g., 'A sleek silver laptop on a wooden desk, studio lighting'." }
+                },
+                required: ['name', 'description', 'price', 'platform', 'image_prompt']
+            }
+        }
+    },
+    required: ['text_response', 'ecommerce_sources', 'products']
+};
+
+async function generateProductImage(imagePrompt: string): Promise<string> {
+    try {
+        const response = await ai.models.generateImages({
+            model: 'imagen-4.0-generate-001',
+            prompt: imagePrompt,
+            config: {
+                numberOfImages: 1,
+                outputMimeType: 'image/jpeg',
+                aspectRatio: '4:3',
+            },
+        });
+
+        if (response.generatedImages && response.generatedImages.length > 0) {
+            const base64ImageBytes = response.generatedImages[0].image.imageBytes;
+            return `data:image/jpeg;base64,${base64ImageBytes}`;
+        }
+        throw new Error("No image was generated.");
+    } catch (e) {
+        console.error(`Error generating image for prompt "${imagePrompt}":`, e);
+        return `https://placehold.co/400x300?text=Image+Generation+Failed`;
+    }
+}
+
+export async function generateMarketplaceResponse(userInput: string): Promise<ApiResponse> {
+    const prompt = `
+        You are Marketplace AI, an intelligent shopping research assistant. Your job is to help users find and buy any product from any online store worldwide.
+
+        **Your core instructions:**
+        1.  **Analyze the user's request:** Identify the product or category. Pay close attention to any specified preferences like brand, price, shipping destination (e.g., "shipped to Nigeria"), origin, eco-friendliness, etc.
+        2.  **Provide comprehensive results:** Search your knowledge base to present the best matching products.
+        3.  **Be helpful and clear:** If the user's query is vague, suggest what details they could add to improve the results (e.g., "To give you better recommendations, could you tell me your budget or preferred brands?"). However, still provide a general response based on the initial query.
+        4.  **Prioritize user needs:** Your goal is to provide a convenient and helpful research experience.
+        
+        **Your knowledge base includes:**
+        - Global platforms: ${ecommerceKnowledge.global_platforms.join(', ')}
+        - Regional platforms summary: ${ecommerceKnowledge.regional_platforms_summary}
+        - Specialized platforms summary: ${ecommerceKnowledge.specialized_platforms_summary}
+
+        **User's request:** "${userInput}"
+
+        **Your task:**
+        Based on the user's request, provide a helpful response. Include a list of relevant e-commerce platforms and specific product recommendations. For each product, create a detailed prompt to generate a high-quality, photorealistic image.
+
+        **Output Format:**
+        Provide your response strictly in the specified JSON format.
+    `;
+
+    const textResponseResult = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+        },
+    });
+
+    const rawResponse = JSON.parse(textResponseResult.text) as GeminiTextResponse;
+
+    const imageGenerationPromises = rawResponse.products.map(async (product) => {
+        const imageUrl = await generateProductImage(product.image_prompt);
+        // Create a new product object without the image_prompt
+        const { image_prompt, ...restOfProduct } = product;
+        return { ...restOfProduct, imageUrl };
+    });
+
+    const productsWithImages = await Promise.all(imageGenerationPromises);
+
+    return {
+        textResponse: rawResponse.text_response,
+        ecommerceSources: rawResponse.ecommerce_sources,
+        products: productsWithImages,
+    };
+}
