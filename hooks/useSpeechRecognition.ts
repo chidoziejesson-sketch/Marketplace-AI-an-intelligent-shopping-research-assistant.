@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 interface SpeechRecognitionOptions {
@@ -41,20 +42,13 @@ export const useSpeechRecognition = ({ onResult }: SpeechRecognitionOptions) => 
     // FIX: Cannot find name 'SpeechRecognitionEvent'. Use `any` for the event type.
     recognition.onresult = (event: any) => {
       let finalTranscript = '';
-      let interimTranscript = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         if (event.results[i].isFinal) {
           finalTranscript += event.results[i][0].transcript;
-        } else {
-          interimTranscript += event.results[i][0].transcript;
         }
       }
       
-      // Update transcript for UI feedback
-      setTranscript(finalTranscript + interimTranscript);
-
-      // When a final result is available, trigger the search.
-      // The recognition will stop itself since `continuous` is false, which then fires `onend`.
+      // When a final result is available, trigger the callback.
       if (finalTranscript) {
         onResultRef.current(finalTranscript.trim());
       }

@@ -1,3 +1,5 @@
+import React from 'react';
+
 export interface Product {
   name: string;
   description: string;
@@ -30,4 +32,17 @@ export interface GeminiTextResponse {
   // FIX: Corrected the malformed type for `ecommerce_sources`. The original type caused a TypeScript error.
   ecommerce_sources: EcommerceSource[];
   products: (Omit<Product, 'imageUrl'> & { image_prompt: string })[];
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'model' | 'error';
+  content: string | ApiResponse;
+}
+
+export interface Command {
+  id: string;
+  name: string;
+  action: () => void;
+  icon?: React.ReactNode;
 }
