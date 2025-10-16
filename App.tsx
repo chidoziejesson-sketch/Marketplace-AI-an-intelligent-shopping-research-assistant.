@@ -1,310 +1,218 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import type { ApiResponse, ChatMessage, Command } from './types';
-import { generateMarketplaceResponse } from './services/geminiService';
+import { v4 as uuidv4 } from 'uuid'; // Using a library for unique IDs
+
+// Components
+import Sidebar from './components/Sidebar';
 import SearchInput from './components/SearchInput';
-import ProductCard from './components/ProductCard';
-import SourceList from './components/SourceList';
+import Welcome from './components/Welcome';
 import LoadingSpinner from './components/LoadingSpinner';
 import ErrorMessage from './components/ErrorMessage';
-import Welcome from './components/Welcome';
-import { useSpeechRecognition } from './hooks/useSpeechRecognition';
-import { useSpeechSynthesis } from './hooks/useSpeechSynthesis';
-import { SpeakerIcon } from './components/SpeakerIcon';
-import Sidebar from './components/Sidebar';
+import SettingsModal from './components/SettingsModal';
 import CommandPalette from './components/CommandPalette';
-import { TrashIcon } from './components/icons/TrashIcon';
-import { ClipboardIcon } from './components/icons/ClipboardIcon';
-import { SoundWaveIcon } from './components/icons/SoundWaveIcon';
-import { MicIcon } from './components/MicIcon';
-import { StopIcon } from './components/StopIcon';
+import { UserMessage, BotResponse } from './components/ChatMessages';
 
-const BotResponse: React.FC<{
-  response: ApiResponse;
-  onToggleSpeak: () => void;
-  isSpeaking: boolean;
-}> = ({ response, onToggleSpeak, isSpeaking }) => {
-  return (
-    <div className="space-y-8">
-      <div>
-        <div className="flex justify-between items-start mb-4 gap-4">
-          <p className="text-gray-300 leading-relaxed flex-1 whitespace-pre-wrap">{response.textResponse}</p>
-          {response.textResponse && (
-            <button
-              onClick={onToggleSpeak}
-              className="p-2 rounded-full hover:bg-gray-700 transition-colors flex-shrink-0"
-              aria-label={isSpeaking ? "Stop reading response" : "Read response aloud"}
-            >
-              <SpeakerIcon isSpeaking={isSpeaking} />
-            </button>
-          )}
-        </div>
-      </div>
 
-      {response.imageGenerationErrors && response.imageGenerationErrors.length > 0 && (
-         <div className="space-y-2">
-          <h3 className="text-xl font-semibold text-yellow-400">Image Generation Notice</h3>
-           {response.imageGenerationErrors.map((imgError, index) => (
-             <div key={index} className="bg-yellow-900/50 border border-yellow-500 text-yellow-300 px-4 py-3 rounded-lg" role="alert">
-               <p>{imgError}</p>
-             </div>
-           ))}
-         </div>
-       )}
+// Hooks
+import { useSpeechRecognition } from './hooks/useSpeechRecognition';
+import { useUserPreferences } from './hooks/useUserPreferences';
+import { useSearchHistory } from './hooks/useSearchHistory';
 
-      {response.products && response.products.length > 0 && (
-        <div>
-          <h2 className="text-2xl font-semibold mb-4 border-b-2 border-purple-500 pb-2">Recommended Products</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {response.products.map((product, index) => (
-              <ProductCard key={index} product={product} />
-            ))}
-          </div>
-        </div>
-      )}
-      
-      {response.ecommerceSources && response.ecommerceSources.length > 0 && (
-        <div>
-          <h2 className="text-2xl font-semibold mb-4 border-b-2 border-purple-500 pb-2">E-commerce Sources</h2>
-          <SourceList sources={response.ecommerceSources} />
-        </div>
-      )}
-    </div>
-  );
-};
+// Services
+import { sendMessageAndStreamResponse } from './services/geminiService';
 
-const App: React.FC = () => {
-  const [userInput, setUserInput] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+// Types
+import type { ChatMessage } from './types';
+
+
+function App() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [currentQuery, setCurrentQuery] = useState('');
+
+  const { preferences, savePreferences } = useUserPreferences();
+  const { addSearchTerm } = useSearchHistory();
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const { speak, cancel, isSpeaking } = useSpeechSynthesis();
-  
-  const handleSendMessage = useCallback(async (query: string) => {
-    if (!query.trim() || isLoading) return;
 
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: query
-    };
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
-    setChatHistory(prev => [...prev, userMessage]);
-    setUserInput('');
-    setIsLoading(true);
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatHistory]);
+
+
+  const handleSendMessage = useCallback(async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return;
+
     setError(null);
-    cancel();
-    setSpeakingMessageId(null);
-
+    setIsLoading(true);
+    addSearchTerm(messageText);
+    
+    const userMessage: ChatMessage = {
+      id: uuidv4(),
+      role: 'user',
+      content: messageText,
+    };
+    
+    // Add user message and a loading placeholder for the bot
+    setChatHistory(prev => [...prev, userMessage, { id: uuidv4(), role: 'model', content: { summary: '...', products: [], sources: [] }, isLoading: true }]);
+    setCurrentQuery('');
+    
     try {
-      const response = await generateMarketplaceResponse(query);
-      const modelMessage: ChatMessage = {
-        id: `gemini-${Date.now()}`,
+      // Create a new bot message object to stream into
+      const botMessage: ChatMessage = {
+        id: uuidv4(),
         role: 'model',
-        content: response,
+        content: { summary: '', products: [], sources: [] },
+        groundingSources: [],
       };
-      setChatHistory(prev => [...prev, modelMessage]);
-    } catch (e) {
-      console.error(e);
-      const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
-      const errorContent = `Failed to get response from Gemini. ${errorMessage}`;
-      const errorMsg: ChatMessage = {
-        id: `error-${Date.now()}`,
-        role: 'error',
-        content: errorContent,
-      };
-      setChatHistory(prev => [...prev, errorMsg]);
+
+      // Replace the loading placeholder with the new bot message shell
+      setChatHistory(prev => [...prev.slice(0, -1), botMessage]);
+
+      const stream = sendMessageAndStreamResponse(messageText, preferences);
+      
+      for await (const { text, sources } of stream) {
+        // Update the content of the last message in the history (which is our bot message)
+        setChatHistory(prev => {
+          const lastMessage = prev[prev.length - 1];
+          if (lastMessage && lastMessage.role === 'model') {
+            try {
+              // Attempt to parse the streaming text as JSON
+              const parsedContent = JSON.parse(text);
+              return [
+                ...prev.slice(0, -1),
+                { ...lastMessage, content: parsedContent, groundingSources: sources }
+              ];
+            } catch (e) {
+              // If parsing fails, it's likely incomplete. Update the summary for streaming effect.
+              const currentContent = lastMessage.content;
+              // FIX: Spread types may only be created from object types.
+              // Added a type guard to ensure `lastMessage.content` is an object before using the spread operator.
+              if (typeof currentContent === 'object' && currentContent !== null) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...lastMessage, content: { ...currentContent, summary: text }, groundingSources: sources }
+                ];
+              }
+            }
+          }
+          return prev;
+        });
+      }
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      setError(errorMessage);
+       // Remove the loading placeholder on error
+      setChatHistory(prev => prev.filter(msg => !(msg.role === 'model' && msg.isLoading)));
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, cancel]);
+  }, [isLoading, preferences, addSearchTerm]);
 
-  const {
-    isListening,
-    startListening,
-    stopListening,
-    error: recognitionError,
-  } = useSpeechRecognition({
-    onResult: (result: string) => {
-      handleSendMessage(result);
+  const { isListening, startListening, stopListening, error: speechError } = useSpeechRecognition({
+    onResult: (transcript) => {
+      handleSendMessage(transcript);
     },
   });
   
   useEffect(() => {
-    if (recognitionError) {
-      setError(`Voice recognition error: ${recognitionError}`);
+    if (speechError) {
+      setError(`Speech Recognition Error: ${speechError}`);
     }
-  }, [recognitionError]);
+  }, [speechError]);
   
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory, isLoading]);
-  
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
-        event.preventDefault();
-        setIsPaletteOpen(open => !open);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsPaletteOpen(p => !p);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-
   const handleMicClick = () => {
     if (isListening) {
       stopListening();
     } else {
-      setError(null);
+      setCurrentQuery('');
       startListening();
     }
   };
 
-  const getLastModelMessage = (): ChatMessage | null => {
-      for (let i = chatHistory.length - 1; i >= 0; i--) {
-        if (chatHistory[i].role === 'model') {
-          return chatHistory[i];
-        }
-      }
-      return null;
-  }
+  const handleNewSearch = () => {
+    setChatHistory([]);
+    setError(null);
+  };
 
-  const commands: Command[] = [
-    {
-      id: 'clear-chat',
-      name: 'Clear Chat History',
-      action: () => setChatHistory([]),
-      icon: <TrashIcon />,
-    },
-    {
-      id: 'copy-response',
-      name: 'Copy Last Response',
-      action: () => {
-        const lastMessage = getLastModelMessage();
-        if(lastMessage) {
-            const lastResponse = lastMessage.content as ApiResponse;
-            navigator.clipboard.writeText(lastResponse.textResponse);
-        }
-      },
-      icon: <ClipboardIcon />,
-    },
-    {
-        id: 'read-response',
-        name: isSpeaking ? 'Stop Reading' : 'Read Last Response',
-        action: () => {
-            const lastMessage = getLastModelMessage();
-            if(!lastMessage) return;
-
-            const lastResponse = lastMessage.content as ApiResponse;
-            if (speakingMessageId === lastMessage.id) {
-                cancel();
-            } else if (lastResponse?.textResponse) {
-                speak(lastResponse.textResponse, {
-                    onStart: () => setSpeakingMessageId(lastMessage.id),
-                    onEnd: () => setSpeakingMessageId(null),
-                });
-            }
-        },
-        icon: <SoundWaveIcon />,
-    },
-    {
-        id: 'toggle-mic',
-        name: isListening ? 'Stop Voice Search' : 'Start Voice Search',
-        action: handleMicClick,
-        icon: isListening ? <StopIcon /> : <MicIcon />,
-    }
-  ];
-
+  const handleExampleClick = (exampleQuery: string) => {
+    handleSendMessage(exampleQuery);
+  };
+  
+  const handleSelectQueryFromPalette = (selectedQuery: string) => {
+    handleSendMessage(selectedQuery);
+  };
+  
   return (
-    <div className="flex h-screen bg-gray-900 text-gray-200 font-sans">
-      <CommandPalette 
-        isOpen={isPaletteOpen} 
-        onClose={() => setIsPaletteOpen(false)}
-        commands={commands}
-      />
-      <Sidebar />
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <main className="flex-1 overflow-y-auto p-4 space-y-6">
-          {chatHistory.length === 0 && !isLoading && (
-            <div className="flex items-center justify-center h-full">
-              <Welcome onExampleClick={handleSendMessage} />
+    <div className="flex h-screen bg-slate-900 text-slate-100 font-sans">
+      <Sidebar onNewSearch={handleNewSearch} onOpenSettings={() => setIsSettingsOpen(true)} />
+      
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 w-full max-w-7xl mx-auto space-y-6">
+          {chatHistory.length === 0 && !isLoading && !error && <Welcome onExampleClick={handleExampleClick} />}
+          
+          {chatHistory.map((msg) => (
+            <div key={msg.id}>
+              {msg.role === 'user' && <UserMessage content={msg.content as string} />}
+              {msg.role === 'model' && <BotResponse response={msg} />}
             </div>
-          )}
-          {chatHistory.map((msg) => {
-            if (msg.role === 'user') {
-              return (
-                <div key={msg.id} className="flex justify-end">
-                  <div className="bg-purple-600 text-white p-3 rounded-lg max-w-xl shadow-md">
-                    {msg.content as string}
-                  </div>
-                </div>
-              );
-            }
-            if (msg.role === 'model') {
-              const response = msg.content as ApiResponse;
-              const isCurrentlySpeaking = speakingMessageId === msg.id;
-              
-              const handleToggleSpeak = () => {
-                  if (isCurrentlySpeaking) {
-                      cancel();
-                  } else {
-                      speak(response.textResponse, {
-                          onStart: () => setSpeakingMessageId(msg.id),
-                          onEnd: () => setSpeakingMessageId(null),
-                      });
-                  }
-              };
-              return (
-                <div key={msg.id} className="flex justify-start">
-                  <div className="bg-gray-800 p-4 rounded-lg max-w-full w-full lg:w-4/5 shadow-md border border-gray-700">
-                      <BotResponse response={response} onToggleSpeak={handleToggleSpeak} isSpeaking={isCurrentlySpeaking}/>
-                  </div>
-                </div>
-              );
-            }
-            if (msg.role === 'error') {
-               return <ErrorMessage key={msg.id} message={msg.content as string} />;
-            }
-            return null;
-          })}
+          ))}
 
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-gray-800 p-4 rounded-lg shadow-md border border-gray-700">
-                <LoadingSpinner />
-              </div>
-            </div>
-          )}
+          {isLoading && chatHistory[chatHistory.length-1]?.role === 'model' && <LoadingSpinner />}
+          {error && <ErrorMessage message={error} />}
           <div ref={chatEndRef} />
-        </main>
+        </div>
         
-        <footer className="p-4 bg-gray-900/80 backdrop-blur-sm border-t border-gray-700 flex-shrink-0">
-          <div className="max-w-3xl mx-auto space-y-4">
-            {error && <ErrorMessage message={error} />}
-            <SearchInput
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onSearch={() => handleSendMessage(userInput)}
+        <div className="p-4 md:p-6 bg-slate-900 border-t border-slate-800">
+           <div className="w-full max-w-7xl mx-auto">
+             <SearchInput
+              value={currentQuery}
+              onChange={(e) => setCurrentQuery(e.target.value)}
+              onSearch={() => handleSendMessage(currentQuery)}
               isLoading={isLoading}
               isListening={isListening}
               onMicClick={handleMicClick}
             />
-             <div className="text-center text-xs text-gray-500">
-                Pro Tip: Press{' '}
-                <kbd className="px-2 py-1.5 text-xs font-semibold text-gray-300 bg-gray-700 border border-gray-600 rounded-md">Ctrl</kbd>{' '}
-                +{' '}
-                <kbd className="px-2 py-1.5 text-xs font-semibold text-gray-300 bg-gray-700 border border-gray-600 rounded-md">K</kbd>{' '}
-                to open the command palette.
-              </div>
-          </div>
-        </footer>
-      </div>
+           </div>
+        </div>
+      </main>
+      
+      <SettingsModal 
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        currentPreferences={preferences}
+        onSave={(newPrefs) => {
+          savePreferences(newPrefs);
+          setIsSettingsOpen(false);
+        }}
+      />
+      
+      <CommandPalette 
+        isOpen={isPaletteOpen}
+        onClose={() => setIsPaletteOpen(false)}
+        onSelectQuery={handleSelectQueryFromPalette}
+      />
     </div>
   );
-};
+}
 
 export default App;
