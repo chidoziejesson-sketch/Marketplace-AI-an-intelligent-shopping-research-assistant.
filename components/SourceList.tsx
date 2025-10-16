@@ -28,7 +28,7 @@ const SourceList: React.FC<SourceListProps> = ({ sources }) => {
             <div className="mt-2">
               <p className="text-xs text-slate-500">Specialties:</p>
               <div className="flex flex-wrap gap-2 mt-1">
-                {source.specialties.map((spec, i) => (
+                {(source.specialties || []).map((spec, i) => (
                   <span key={i} className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded-full">{spec}</span>
                 ))}
               </div>

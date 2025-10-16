@@ -13,7 +13,8 @@ export const useRateLimiter = <T extends (...args: any[]) => void>(
   delay: number
 ): ((...args: Parameters<T>) => void) => {
   const canRun = useRef(true);
-  const timer = useRef<NodeJS.Timeout | null>(null);
+  // FIX: Replace NodeJS.Timeout with a browser-compatible type. ReturnType<typeof setTimeout> works in both Node and browser environments.
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // Cleanup the timer when the component unmounts

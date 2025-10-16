@@ -1,80 +1,89 @@
 import React from 'react';
-import type { ChatMessage, GeminiResponse } from '../types';
+import type { ChatMessage, GeminiResponse, GroundingSource } from '../types';
 import ProductCard from './ProductCard';
 import SourceList from './SourceList';
 import WebSources from './WebSources';
-import { SpeakerIcon } from './SpeakerIcon';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
+import { SpeakerIcon } from './SpeakerIcon';
+import LoadingSpinner from './LoadingSpinner';
 
 // Component for displaying the user's message
-export const UserMessage: React.FC<{ content: string }> = ({ content }) => (
+export const UserMessage: React.FC<{ message: string }> = ({ message }) => (
   <div className="flex justify-end">
-    <div className="bg-violet-600 text-white rounded-lg rounded-br-none p-3 max-w-2xl">
-      <p>{content}</p>
+    <div className="bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white rounded-2xl rounded-br-none p-4 max-w-2xl shadow-lg">
+      <p>{message}</p>
     </div>
   </div>
 );
 
-// Component for displaying the bot's response
-interface BotResponseProps {
-  response: ChatMessage;
-}
-export const BotResponse: React.FC<BotResponseProps> = ({ response }) => {
+// Component for displaying the AI model's response
+export const BotResponse: React.FC<{ message: ChatMessage }> = ({ message }) => {
   const { isSpeaking, speak, cancel } = useSpeechSynthesis();
   
-  if (response.isLoading || !response.content || typeof response.content === 'string') {
-    return null; // or a loading skeleton for the bot message
+  const result = message.content as GeminiResponse;
+  const groundingSources = message.groundingSources || [];
+  const isLoading = message.isLoading || false;
+
+  const products = result.products || [];
+  const sources = result.sources || [];
+  const displaySummary = result.summary;
+
+  const hasContent = products.length > 0 || sources.length > 0 || displaySummary;
+
+  if (isLoading && !hasContent) {
+    return (
+        <div className="flex justify-start">
+            <div className="bg-slate-800/80 backdrop-blur-sm border border-slate-700 rounded-2xl rounded-bl-none p-4 max-w-2xl w-full">
+                <LoadingSpinner />
+            </div>
+        </div>
+    );
   }
-
-  const result = response.content as GeminiResponse;
-  const groundingSources = response.groundingSources || [];
-
-  const hasResults = result.products.length > 0 || result.sources.length > 0;
 
   return (
     <div className="flex justify-start">
-      <div className="bg-slate-800 rounded-lg rounded-bl-none p-4 max-w-4xl w-full animate-fade-in space-y-8">
-        <div>
-          <div className="flex items-center gap-4 mb-4">
-            <h2 className="text-2xl md:text-3xl font-bold text-slate-100">Summary</h2>
-            <button onClick={() => isSpeaking ? cancel() : speak(result.summary)} aria-label={isSpeaking ? 'Stop speaking' : 'Read summary aloud'}>
-              <SpeakerIcon isSpeaking={isSpeaking} />
-            </button>
-          </div>
-          <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">{result.summary}</p>
-        </div>
+        <div className="relative bg-gradient-to-br from-slate-700/60 to-slate-800/60 p-[1px] rounded-2xl rounded-bl-none max-w-4xl w-full shadow-lg">
+          <div className="bg-slate-800/70 backdrop-blur-md rounded-[15px] p-4 space-y-6">
+            {displaySummary && (
+              <div>
+                <div className="flex items-center gap-4 mb-2">
+                  <h3 className="text-xl font-semibold text-slate-100">AI Overview</h3>
+                  <button onClick={() => isSpeaking ? cancel() : speak(displaySummary)} aria-label={isSpeaking ? 'Stop speaking' : 'Read summary aloud'}>
+                    <SpeakerIcon isSpeaking={isSpeaking} />
+                  </button>
+                </div>
+                <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">
+                  {displaySummary}
+                  {isLoading && <span className="inline-block w-2 h-4 bg-slate-400 ml-1 animate-pulse"></span>}
+                </p>
+              </div>
+            )}
 
-        {result.products.length > 0 && (
-          <div>
-            <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">Products & Services</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {result.products.map((product, index) => (
-                <ProductCard key={index} product={product} />
-              ))}
+            {products.length > 0 && (
+              <div>
+                <h3 className="text-xl font-semibold text-slate-100 mb-4">Products & Services</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {products.map((product, index) => (
+                    <ProductCard key={index} product={product} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {sources.length > 0 && (
+                <div>
+                  <h3 className="text-xl font-semibold text-slate-100 mb-4">Recommended Marketplaces</h3>
+                  <SourceList sources={sources} />
+                </div>
+              )}
+
+              {groundingSources.length > 0 && (
+                <WebSources sources={groundingSources} />
+              )}
             </div>
           </div>
-        )}
-        
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-4">
-          {result.sources.length > 0 && (
-            <div>
-              <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">Recommended Marketplaces</h2>
-              <SourceList sources={result.sources} />
-            </div>
-          )}
-          
-          {groundingSources.length > 0 && (
-             <WebSources sources={groundingSources} />
-          )}
         </div>
-        
-         {!hasResults && (
-            <div className="text-center py-10">
-              <p className="text-slate-400">No specific products or sources were found for your query.</p>
-              <p className="text-slate-500 text-sm mt-2">Try being more specific or broadening your search terms.</p>
-            </div>
-        )}
-      </div>
     </div>
   );
 };
